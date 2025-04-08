@@ -5,164 +5,146 @@ import qrcode
 from PIL import ImageTk, Image
 import os
 import csv
+import json
 import PyInstaller.__main__
 
+
 def get_wifi_profiles():
-    """Retrieve a list of saved WiFi profiles."""
+    """Retrieve all saved WiFi profile names."""
     try:
-        data = subprocess.check_output(['netsh', 'wlan', 'show', 'profiles'], text=True, errors='ignore')
-        profiles = [line.split(':')[1].strip() for line in data.split('\n') if 'All User Profile' in line]
-        return profiles if profiles else []
-    except Exception as e:
+        result = subprocess.check_output(['netsh', 'wlan', 'show', 'profiles'], text=True, errors='ignore')
+        return [line.split(':')[1].strip() for line in result.splitlines() if "All User Profile" in line]
+    except subprocess.CalledProcessError as e:
         return [f"Error: {e}"]
 
+
 def get_wifi_password(profile):
-    """Retrieve the password for a specific WiFi profile."""
+    """Retrieve the password for the specified WiFi profile."""
     try:
         result = subprocess.check_output(['netsh', 'wlan', 'show', 'profile', profile, 'key=clear'], text=True, errors='ignore')
-        for line in result.split('\n'):
+        for line in result.splitlines():
             if "Key Content" in line:
                 return line.split(':')[1].strip()
-        return "No password found"
-    except Exception as e:
+        return "(No password found)"
+    except subprocess.CalledProcessError as e:
         return f"Error: {e}"
 
-def get_all_wifi_passwords():
-    """Retrieve all saved WiFi passwords."""
-    profiles = get_wifi_profiles()
-    if not profiles or "Error" in profiles[0]:
-        return "No WiFi profiles found or unable to retrieve."
-    
-    password_info = "WiFi Passwords:\n"
-    for profile in profiles:
-        password = get_wifi_password(profile)
-        password_info += f"{profile}: {password}\n"
-    
-    return password_info.strip()
 
-def show_passwords():
-    """Display WiFi passwords in the text area."""
-    passwords = get_all_wifi_passwords()
+def collect_wifi_credentials():
+    """Gather all WiFi credentials into a dictionary."""
+    profiles = get_wifi_profiles()
+    return {profile: get_wifi_password(profile) for profile in profiles}
+
+
+def display_credentials():
+    """Show all WiFi credentials in the text area."""
     text_area.config(state=tk.NORMAL)
     text_area.delete(1.0, tk.END)
-    text_area.insert(tk.END, passwords)
+    credentials = collect_wifi_credentials()
+    if credentials:
+        for profile, password in credentials.items():
+            text_area.insert(tk.END, f"{profile}: {password}\n")
+    else:
+        text_area.insert(tk.END, "No WiFi profiles found.")
     text_area.config(state=tk.DISABLED)
 
-def copy_to_clipboard():
-    """Copy WiFi passwords to clipboard."""
-    passwords = text_area.get(1.0, tk.END).strip()
-    if passwords:
-        root.clipboard_clear()
-        root.clipboard_append(passwords)
-        root.update()
-        messagebox.showinfo("Copied", "Passwords copied to clipboard!")
-    else:
-        messagebox.showwarning("Warning", "No passwords to copy!")
 
-def save_to_file():
-    """Save WiFi passwords to a file."""
-    passwords = text_area.get(1.0, tk.END).strip()
-    if not passwords:
-        messagebox.showwarning("Warning", "No passwords to save!")
+def export_to_json():
+    """Export WiFi credentials to a JSON file."""
+    credentials = collect_wifi_credentials()
+    if not credentials:
+        messagebox.showwarning("Warning", "No WiFi profiles found.")
         return
-    
-    file_path = filedialog.asksaveasfilename(defaultextension=".txt", filetypes=[("Text Files", "*.txt"), ("All Files", "*.*")])
+    file_path = filedialog.asksaveasfilename(defaultextension=".json", filetypes=[("JSON Files", "*.json")])
     if file_path:
         with open(file_path, 'w') as file:
-            file.write(passwords)
-        messagebox.showinfo("Success", "Passwords saved successfully!")
+            json.dump(credentials, file, indent=4)
+        messagebox.showinfo("Success", "Credentials saved as JSON.")
 
-def save_to_csv():
-    """Save WiFi passwords to a CSV file."""
-    profiles = get_wifi_profiles()
-    if not profiles:
-        messagebox.showwarning("Warning", "No WiFi profiles found!")
+
+def export_to_csv():
+    """Export WiFi credentials to a CSV file."""
+    credentials = collect_wifi_credentials()
+    if not credentials:
+        messagebox.showwarning("Warning", "No WiFi profiles found.")
         return
-    
-    file_path = filedialog.asksaveasfilename(defaultextension=".csv", filetypes=[("CSV Files", "*.csv"), ("All Files", "*.*")])
+    file_path = filedialog.asksaveasfilename(defaultextension=".csv", filetypes=[("CSV Files", "*.csv")])
     if file_path:
         with open(file_path, 'w', newline='') as file:
             writer = csv.writer(file)
             writer.writerow(["WiFi Name", "Password"])
-            for profile in profiles:
-                password = get_wifi_password(profile)
+            for profile, password in credentials.items():
                 writer.writerow([profile, password])
-        messagebox.showinfo("Success", "Passwords saved to CSV successfully!")
+        messagebox.showinfo("Success", "Credentials saved as CSV.")
 
-def generate_qr():
-    """Generate a QR code containing WiFi passwords."""
-    passwords = text_area.get(1.0, tk.END).strip()
-    if not passwords:
-        messagebox.showwarning("Warning", "No passwords to generate QR code!")
+
+def create_qr_code():
+    """Generate a QR code containing WiFi credentials."""
+    credentials = collect_wifi_credentials()
+    if not credentials:
+        messagebox.showwarning("Warning", "No WiFi profiles found.")
         return
-    
-    qr = qrcode.make(passwords)
-    qr_path = "wifi_qr.png"
-    qr.save(qr_path)
-    img = Image.open(qr_path)
-    img = img.resize((200, 200))
-    img = ImageTk.PhotoImage(img)
-    qr_label.config(image=img)
-    qr_label.image = img
-    messagebox.showinfo("Success", "QR Code generated!")
+    content = '\n'.join([f"{profile}: {password}" for profile, password in credentials.items()])
+    img = qrcode.make(content)
+    img.save("wifi_qrcode.png")
+    qr = Image.open("wifi_qrcode.png").resize((200, 200))
+    qr_img = ImageTk.PhotoImage(qr)
+    qr_label.config(image=qr_img)
+    qr_label.image = qr_img
+    messagebox.showinfo("Success", "QR code generated.")
 
-def delete_saved_qr():
-    """Delete the generated QR code."""
-    if os.path.exists("wifi_qr.png"):
-        os.remove("wifi_qr.png")
+
+def remove_qr_code():
+    """Remove the generated QR code image from the directory."""
+    if os.path.exists("wifi_qrcode.png"):
+        os.remove("wifi_qrcode.png")
         qr_label.config(image='')
-        messagebox.showinfo("Deleted", "QR Code deleted successfully!")
+        messagebox.showinfo("Deleted", "QR code image deleted.")
     else:
-        messagebox.showwarning("Warning", "No QR Code found to delete!")
+        messagebox.showwarning("Warning", "QR code image not found.")
 
-def create_executable():
-    """Create an executable file using PyInstaller."""
-    PyInstaller.__main__.run([
-        'wifi_password_extractor.py',
-        '--onefile',
-        '--windowed'
-    ])
-    messagebox.showinfo("Success", "Executable created successfully!")
 
-def save_to_json():
-    """Save WiFi passwords to a JSON file."""
-    import json
-    profiles = get_wifi_profiles()
-    if not profiles:
-        messagebox.showwarning("Warning", "No WiFi profiles found!")
-        return
-    
-    wifi_data = {profile: get_wifi_password(profile) for profile in profiles}
-    file_path = filedialog.asksaveasfilename(defaultextension=".json", filetypes=[("JSON Files", "*.json"), ("All Files", "*.*")])
-    if file_path:
-        with open(file_path, 'w') as file:
-            json.dump(wifi_data, file, indent=4)
-        messagebox.showinfo("Success", "Passwords saved to JSON successfully!")
-
-def create_executable():
-    """Create an executable file using PyInstaller."""
+def build_executable():
+    """Compile this script into an executable using PyInstaller."""
     PyInstaller.__main__.run([
         os.path.abspath(__file__),
         '--onefile',
         '--windowed'
     ])
-    messagebox.showinfo("Success", "Executable created successfully!")
+    messagebox.showinfo("Build Complete", "Executable created.")
 
-# Create the GUI
+
+# GUI Initialization
 root = tk.Tk()
 root.title("WiFi Password Extractor")
-root.geometry("500x750")
+root.geometry("520x780")
 root.resizable(False, False)
 
-tk.Label(root, text="Click the button to retrieve saved WiFi passwords", font=("Arial", 10)).pack(pady=10)
+# Heading
+header = tk.Label(root, text="WiFi Password Extractor", font=("Arial", 16, "bold"))
+header.pack(pady=10)
 
-tk.Button(root, text="Get Passwords", command=lambda: text_area.insert(tk.END, get_all_wifi_passwords()), font=("Arial", 12), bg="blue", fg="white").pack(pady=5)
+# Buttons
+actions = [
+    ("Get WiFi Passwords", display_credentials, "#007acc"),
+    ("Save as JSON", export_to_json, "#28a745"),
+    ("Save as CSV", export_to_csv, "#f39c12"),
+    ("Generate QR Code", create_qr_code, "#8e44ad"),
+    ("Delete QR Code", remove_qr_code, "#e74c3c"),
+    ("Create Executable", build_executable, "#95a5a6")
+]
 
-tk.Button(root, text="Save to JSON", command=save_to_json, font=("Arial", 12), bg="dark green", fg="white").pack(pady=5)
+for text, command, color in actions:
+    tk.Button(root, text=text, command=command, font=("Arial", 12), bg=color, fg="white").pack(pady=5)
 
-tk.Button(root, text="Create Executable", command=create_executable, font=("Arial", 12), bg="gray", fg="white").pack(pady=5)
-
-text_area = scrolledtext.ScrolledText(root, width=60, height=10, font=("Arial", 10))
+# Output Display
+text_area = scrolledtext.ScrolledText(root, width=60, height=12, font=("Courier New", 10))
 text_area.pack(pady=10)
+text_area.config(state=tk.DISABLED)
 
+# QR Code Display
+qr_label = tk.Label(root)
+qr_label.pack(pady=10)
+
+# Start GUI loop
 root.mainloop()
